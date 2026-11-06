@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      args:
+        SKIP_ML: "0"   # set to "1" for a fast, ML-free stub-only build
+    ports:
+      - "8000:8000"
+    environment:
+      API_KEY: ${API_KEY:-changeme-please-set-a-strong-key}
+      AUTH_MODE: ${AUTH_MODE:-api_key}
+      THRESHOLD_FLAG: ${THRESHOLD_FLAG:-0.5}
+      THRESHOLD_BLOCK: ${THRESHOLD_BLOCK:-0.85}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://guardrail:guardrail@postgres:5432/guardrail}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      TEXT_MODEL_MODE: ${TEXT_MODEL_MODE:-auto}
+      IMAGE_MODEL_MODE: ${IMAGE_MODEL_MODE:-auto}
+      HF_IMAGE_MODEL: ${HF_IMAGE_MODEL:-Falconsai/nsfw_image_detection}
+    depends_on:
+      - postgres
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: guardrail
+      POSTGRES_PASSWORD: guardrail
+      POSTGRES_DB: guardrail
+    volumes:
+      - guardrail_pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  guardrail_pg_data:

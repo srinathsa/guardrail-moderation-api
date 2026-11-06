@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Guardrail Social — Live Feed</title>
+<link rel="stylesheet" href="/assets/style.css" />
+<style>
+  .feed-wrap { max-width: 560px; margin: 0 auto; padding: 24px 16px 64px; }
+  .compose { background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+     border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 22px; }
+  .compose .as-who { font-size:12px; color: var(--text-dim); margin-bottom:10px; }
+  .compose textarea { min-height: 70px; margin-bottom: 10px; }
+  .compose .actions { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .compose input[type=file] { font-size:12px; flex:1; }
+  .status-msg { margin-top:10px; padding:9px 12px; border-radius: var(--radius-sm); font-size:12.5px; display:none; }
+  .status-msg.ok { background: var(--allow-bg); color: var(--allow); display:block; }
+  .status-msg.warn { background: var(--flag-bg); color: var(--flag); display:block; }
+  .status-msg.bad { background: var(--block-bg); color: var(--block); display:block; }
+
+  .post-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+     margin-bottom: 18px; overflow: hidden; }
+  .post-head { display:flex; align-items:center; gap:10px; padding: 14px 16px 10px; }
+  .avatar { width: 34px; height:34px; border-radius:50%; background: linear-gradient(135deg, var(--brand), #a78bfa);
+     display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#0b0d12; flex-shrink:0; }
+  .post-head .author { font-weight:600; font-size:13.5px; }
+  .post-head .time { font-size:11px; color: var(--text-faint); margin-top:1px; }
+  .post-media { width:100%; max-height: 480px; object-fit: cover; display:block; background: var(--bg-elevated); }
+  .post-caption { padding: 12px 16px 4px; font-size: 13.5px; line-height:1.5; }
+  .post-caption .author-inline { font-weight:600; margin-right:6px; }
+  .comments { padding: 8px 16px 14px; }
+  .comment { font-size: 13px; padding: 5px 0; line-height:1.5; }
+  .comment .author-inline { font-weight:600; margin-right:6px; }
+  .comment-form { display:flex; gap:8px; padding: 10px 16px 16px; border-top: 1px solid var(--border-soft); }
+  .comment-form input[type=text] { flex:1; font-size:13px; padding: 8px 10px; }
+  .comment-form button { flex-shrink:0; }
+  .feed-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+  .feed-header h1 { font-size:18px; margin:0; }
+  .feed-header .refresh-btn { font-size:12px; }
+</style>
+</head>
+<body>
+<div id="navHolder"></div>
+
+<div class="feed-wrap">
+  <div class="compose">
+    <div class="as-who">Posting as <strong id="asWho"></strong></div>
+    <textarea id="captionInput" placeholder="What's on your mind?"></textarea>
+    <div class="actions">
+      <input type="file" id="mediaInput" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime" />
+      <button class="btn-primary" onclick="submitPost()" id="postBtn">Post</button>
+    </div>
+    <div class="status-msg" id="postStatus"></div>
+  </div>
+
+  <div class="feed-header">
+    <h1>Live feed</h1>
+    <button class="btn-outline refresh-btn" onclick="loadFeed()">Refresh</button>
+  </div>
+
+  <div id="feedContainer"></div>
+  <div id="feedEmpty" class="empty-state" style="display:none">No posts yet — be the first to post something!</div>
+</div>
+
+<script src="/assets/common.js"></script>
+<script>
+// Browsing doesn't require login, but posting/commenting does — same as a
+// real social app. Redirect to /login only when the user tries to interact.
+const token = localStorage.getItem('guardrail_token');
+const username = localStorage.getItem('guardrail_username');
+const role = localStorage.getItem('guardrail_role');
+const baseUrl = localStorage.getItem('guardrail_base_url') || window.location.origin;
+
+if (token) {
+  const session = { token, username, role, baseUrl };
+  document.getElementById('navHolder').innerHTML = guardrailRenderNavbar('/', session);
+  document.getElementById('asWho').textContent = username;
+} else {
+  document.getElementById('navHolder').innerHTML = `
+    <div class="navbar">
+      <div class="brand"><div class="logo">🛡️</div> Guardrail Social</div>
+      <nav><a href="/" class="active">Feed</a><a href="/demo">API Demo</a></nav>
+      <div><a href="/login" class="btn-outline btn-sm" style="text-decoration:none">Sign in to post →</a></div>
+    </div>
+  `;
+  document.querySelector('.compose').style.display = 'none';
+}
+
+loadFeed();
+setInterval(loadFeed, 15000); // light auto-refresh so approvals show up without manual reload
+
+function timeAgo(dateStr) {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function initials(name) {
+  return (name || '?').trim().slice(0, 2).toUpperCase();
+}
+
+async function loadFeed() {
+  try {
+    const res = await fetch(`${baseUrl}/feed/posts?limit=30`);
+    if (!res.ok) return;
+    const data = await res.json();
+    renderFeed(data.items);
+  } catch (e) { /* silent on background refresh */ }
+}
+
+function renderFeed(items) {
+  const container = document.getElementById('feedContainer');
+  const empty = document.getElementById('feedEmpty');
+  container.innerHTML = '';
+  if (!items.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+
+  for (const post of items) {
+    const card = document.createElement('div');
+    card.className = 'post-card';
+
+    let html = `
+      <div class="post-head">
+        <div class="avatar">${initials(post.author_name)}</div>
+        <div>
+          <div class="author">${guardrailEsc(post.author_name)}</div>
+          <div class="time">${timeAgo(post.created_at)}</div>
+        </div>
+      </div>
+    `;
+    if (post.media_url && post.media_type === 'video') {
+      html += `<video class="post-media" src="${post.media_url}" controls></video>`;
+    } else if (post.media_url) {
+      html += `<img class="post-media" src="${post.media_url}" alt="post image" />`;
+    }
+    if (post.text_content) {
+      html += `<div class="post-caption"><span class="author-inline">${guardrailEsc(post.author_name)}</span>${guardrailEsc(post.text_content)}</div>`;
+    }
+    html += `<div class="comments" id="comments-${post.id}">`;
+    for (const c of post.comments) {
+      html += `<div class="comment"><span class="author-inline">${guardrailEsc(c.author_name)}</span>${guardrailEsc(c.text_content)}</div>`;
+    }
+    html += `</div>`;
+    if (token) {
+      html += `
+        <div class="comment-form">
+          <input type="text" id="commentInput-${post.id}" placeholder="Add a comment..." />
+          <button class="btn-outline btn-sm" onclick="submitComment(${post.id})">Send</button>
+        </div>
+      `;
+    }
+    card.innerHTML = html;
+    container.appendChild(card);
+  }
+}
+
+function showPostStatus(decision) {
+  const el = document.getElementById('postStatus');
+  el.style.display = 'block';
+  if (decision === 'allow') {
+    el.className = 'status-msg ok';
+    el.textContent = "Posted! It's live in the feed.";
+  } else if (decision === 'block') {
+    el.className = 'status-msg bad';
+    el.textContent = 'This was blocked by moderation and will not appear publicly.';
+  } else {
+    el.className = 'status-msg warn';
+    el.textContent = "This was flagged for review — it'll appear once an admin approves it.";
+  }
+  setTimeout(() => { el.style.display = 'none'; }, 6000);
+}
+
+async function submitPost() {
+  if (!token) { window.location.href = '/login'; return; }
+
+  const caption = document.getElementById('captionInput').value.trim();
+  const fileInput = document.getElementById('mediaInput');
+  const file = fileInput.files[0];
+  const btn = document.getElementById('postBtn');
+
+  if (!caption && !file) {
+    guardrailShowToast('Write something or attach a photo/video first.');
+    return;
+  }
+
+  const form = new FormData();
+  form.append('caption', caption);
+  if (file) form.append('media', file);
+
+  btn.disabled = true;
+  btn.textContent = 'Posting…';
+  try {
+    const res = await fetch(`${baseUrl}/feed/posts`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: form
+    });
+    const data = await res.json();
+    if (res.status === 401) { guardrailLogout(); return; }
+    if (!res.ok) {
+      guardrailShowToast(data.detail || 'Failed to post.');
+      return;
+    }
+    showPostStatus(data.decision);
+    document.getElementById('captionInput').value = '';
+    fileInput.value = '';
+    loadFeed();
+  } catch (e) {
+    guardrailShowToast('Could not reach the API.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Post';
+  }
+}
+
+async function submitComment(postId) {
+  if (!token) { window.location.href = '/login'; return; }
+
+  const input = document.getElementById(`commentInput-${postId}`);
+  const text = input.value.trim();
+  if (!text) return;
+
+  const form = new FormData();
+  form.append('text', text);
+
+  try {
+    const res = await fetch(`${baseUrl}/feed/posts/${postId}/comments`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: form
+    });
+    const data = await res.json();
+    if (res.status === 401) { guardrailLogout(); return; }
+    if (!res.ok) {
+      guardrailShowToast(data.detail || 'Failed to comment.');
+      return;
+    }
+    input.value = '';
+    if (data.decision === 'allow') {
+      guardrailShowToast('Comment posted!');
+    } else if (data.decision === 'block') {
+      guardrailShowToast('Comment blocked by moderation.');
+    } else {
+      guardrailShowToast('Comment flagged — pending review.');
+    }
+    loadFeed();
+  } catch (e) {
+    guardrailShowToast('Could not reach the API.');
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin — Guardrail</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+<div id="navHolder"></div>
+
+<main class="page">
+  <div class="page-header">
+    <h1>Admin settings</h1>
+    <p>Manage dashboard users and the custom content blocklist.</p>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <h2>Dashboard users</h2>
+      <div class="row" style="margin-bottom:16px; align-items:end; gap:10px;">
+        <div style="flex:1"><label>Username</label><input type="text" id="newUsername" /></div>
+        <div style="flex:1"><label>Password</label><input type="password" id="newPassword" /></div>
+        <div style="flex:0 0 130px">
+          <label>Role</label>
+          <select id="newRole">
+            <option value="client">client</option>
+            <option value="moderator">moderator</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <button class="btn-primary" onclick="createUser()">Add user</button>
+      </div>
+      <table>
+        <thead><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+      <div id="usersEmpty" class="empty-state" style="display:none">No users yet.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Content blocklist</h2>
+      <p class="muted" style="font-size:12px; margin-top:-8px; margin-bottom:16px;">
+        Any text containing one of these words/phrases is force-blocked, regardless of model score.
+      </p>
+      <div class="row" style="margin-bottom:16px; gap:10px;">
+        <div style="flex:1"><label>New term</label><input type="text" id="newTerm" placeholder="e.g. a banned phrase" /></div>
+        <button class="btn-primary" style="align-self:end" onclick="addTerm()">Add term</button>
+      </div>
+      <table>
+        <thead><tr><th>Term</th><th>Added by</th><th>When</th><th></th></tr></thead>
+        <tbody id="blocklistBody"></tbody>
+      </table>
+      <div id="blocklistEmpty" class="empty-state" style="display:none">No blocklist terms yet.</div>
+    </div>
+  </div>
+</main>
+
+<script src="/assets/common.js"></script>
+<script>
+const session = guardrailRequireAuth();
+
+if (session) {
+  if (session.role !== 'admin') {
+    document.body.innerHTML = '<div class="center-screen"><div class="auth-card"><h1>Admins only</h1><p class="sub">Your account does not have access to this page.</p><a href="/review">← back to review queue</a></div></div>';
+  } else {
+    document.getElementById('navHolder').innerHTML = guardrailRenderNavbar('/admin', session);
+    loadUsers();
+    loadBlocklist();
+  }
+}
+
+async function loadUsers() {
+  const res = await guardrailApiFetch(session, '/auth/users');
+  const body = document.getElementById('usersBody');
+  const empty = document.getElementById('usersEmpty');
+  body.innerHTML = '';
+  if (!res.ok) { empty.style.display = 'block'; empty.textContent = 'Failed to load users.'; return; }
+  const users = await res.json();
+  if (!users.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  for (const u of users) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${guardrailEsc(u.username)}</td>
+      <td><span class="badge role-${u.role}">${u.role}</span></td>
+      <td class="faint">${new Date(u.created_at).toLocaleDateString()}</td>
+      <td><button class="btn-danger-outline btn-sm" onclick="deleteUser(${u.id}, '${guardrailEsc(u.username)}')">Remove</button></td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
+async function createUser() {
+  const username = document.getElementById('newUsername').value.trim();
+  const password = document.getElementById('newPassword').value;
+  const role = document.getElementById('newRole').value;
+  if (!username || password.length < 6) {
+    alert('Username required and password must be at least 6 characters.');
+    return;
+  }
+  const res = await guardrailApiFetch(session, '/auth/users', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password, role })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Failed: ${err.detail || res.status}`);
+    return;
+  }
+  document.getElementById('newUsername').value = '';
+  document.getElementById('newPassword').value = '';
+  guardrailShowToast(`User "${username}" created`);
+  loadUsers();
+}
+
+async function deleteUser(id, username) {
+  if (!confirm(`Remove user "${username}"?`)) return;
+  const res = await guardrailApiFetch(session, `/auth/users/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Failed: ${err.detail || res.status}`);
+    return;
+  }
+  guardrailShowToast(`User "${username}" removed`);
+  loadUsers();
+}
+
+async function loadBlocklist() {
+  const res = await guardrailApiFetch(session, '/admin/blocklist');
+  const body = document.getElementById('blocklistBody');
+  const empty = document.getElementById('blocklistEmpty');
+  body.innerHTML = '';
+  if (!res.ok) { empty.style.display = 'block'; empty.textContent = 'Failed to load blocklist.'; return; }
+  const terms = await res.json();
+  if (!terms.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  for (const t of terms) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono">${guardrailEsc(t.term)}</td>
+      <td class="faint">${guardrailEsc(t.added_by || '—')}</td>
+      <td class="faint">${new Date(t.created_at).toLocaleDateString()}</td>
+      <td><button class="btn-danger-outline btn-sm" onclick="deleteTerm(${t.id}, '${guardrailEsc(t.term)}')">Remove</button></td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
+async function addTerm() {
+  const term = document.getElementById('newTerm').value.trim();
+  if (!term) return;
+  const res = await guardrailApiFetch(session, '/admin/blocklist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ term })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Failed: ${err.detail || res.status}`);
+    return;
+  }
+  document.getElementById('newTerm').value = '';
+  guardrailShowToast(`"${term}" added to blocklist`);
+  loadBlocklist();
+}
+
+async function deleteTerm(id, term) {
+  if (!confirm(`Remove "${term}" from the blocklist?`)) return;
+  const res = await guardrailApiFetch(session, `/admin/blocklist/${id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Failed: ${err.detail || res.status}`);
+    return;
+  }
+  guardrailShowToast(`"${term}" removed`);
+  loadBlocklist();
+}
+</script>
+</body>
+</html>

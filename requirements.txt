@@ -1,0 +1,29 @@
+# --- Core API ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+python-multipart==0.0.9
+sqlalchemy==2.0.35
+
+# --- PostgreSQL driver (only needed if DATABASE_URL points at postgres) ---
+psycopg2-binary==2.9.9
+
+# --- Language detection ---
+langdetect==1.0.9
+
+# --- JWT auth for dashboard users ---
+PyJWT==2.9.0
+
+# --- Optional: Reddit integration script (integrations/reddit_moderator.py) ---
+praw==7.7.1
+requests==2.32.3
+
+# --- Image handling (used by both ML path and heuristic fallback) ---
+Pillow==10.4.0
+
+# --- Heavy ML deps (optional at runtime: the app falls back to lightweight
+#     heuristic stubs automatically if these are missing or model weights
+#     can't be downloaded, e.g. offline environments) ---
+torch==2.4.1
+transformers==4.44.2
+detoxify==0.5.2

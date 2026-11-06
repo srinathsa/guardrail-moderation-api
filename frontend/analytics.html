@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Analytics — Guardrail</title>
+<link rel="stylesheet" href="/assets/style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="navHolder"></div>
+
+<main class="page">
+  <div class="page-header">
+    <h1>Analytics</h1>
+    <p>Moderation trends, category breakdowns, and human-review quality metrics.</p>
+  </div>
+
+  <div class="grid-4" style="margin-bottom:22px">
+    <div class="stat-card">
+      <div class="label">Total requests</div>
+      <div class="value" id="statTotal">—</div>
+      <div class="sub" id="statTotalSub"></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Blocked</div>
+      <div class="value" id="statBlocked" style="color:var(--block)">—</div>
+      <div class="sub">of all requests</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Flagged</div>
+      <div class="value" id="statFlagged" style="color:var(--flag)">—</div>
+      <div class="sub">of all requests</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">False-positive rate</div>
+      <div class="value" id="statFPR" style="color:var(--brand)">—</div>
+      <div class="sub">flag/block later approved by a human</div>
+    </div>
+  </div>
+
+  <div class="grid-2" style="margin-bottom:22px">
+    <div class="panel">
+      <h2>Decisions over time</h2>
+      <canvas id="trendChart" height="220"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Average category score (text)</h2>
+      <canvas id="categoryChart" height="220"></canvas>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <h2>Review status breakdown</h2>
+      <canvas id="reviewChart" height="220"></canvas>
+    </div>
+    <div class="panel">
+      <h2>Moderator activity</h2>
+      <table>
+        <thead><tr><th>Moderator</th><th>Reviews</th><th>Approved</th><th>Rejected</th></tr></thead>
+        <tbody id="modBody"></tbody>
+      </table>
+      <div id="modEmpty" class="empty-state" style="display:none">No reviews recorded yet.</div>
+    </div>
+  </div>
+</main>
+
+<script src="/assets/common.js"></script>
+<script>
+const session = guardrailRequireAuth();
+let trendChart, categoryChart, reviewChart;
+
+if (session) {
+  document.getElementById('navHolder').innerHTML = guardrailRenderNavbar('/analytics', session);
+  loadAnalytics();
+}
+
+const chartTextColor = '#9aa3b5';
+const chartGridColor = 'rgba(255,255,255,0.06)';
+Chart.defaults.color = chartTextColor;
+Chart.defaults.font.family = "'Inter', sans-serif";
+
+async function loadAnalytics() {
+  const res = await guardrailApiFetch(session, '/analytics/summary');
+  if (!res.ok) {
+    guardrailShowToast('Failed to load analytics');
+    return;
+  }
+  const data = await res.json();
+  renderStats(data);
+  renderTrendChart(data.by_day);
+  renderCategoryChart(data.category_averages);
+  renderReviewChart(data.review_stats);
+  renderModeratorTable(data.moderator_stats);
+}
+
+function renderStats(data) {
+  const t = data.totals;
+  document.getElementById('statTotal').textContent = t.total ?? 0;
+  document.getElementById('statTotalSub').textContent = `${t.allow || 0} allowed`;
+  document.getElementById('statBlocked').textContent = t.block || 0;
+  document.getElementById('statFlagged').textContent = t.flag || 0;
+  document.getElementById('statFPR').textContent =
+    data.false_positive_rate === null ? 'n/a' : `${Math.round(data.false_positive_rate * 100)}%`;
+}
+
+function renderTrendChart(byDay) {
+  const ctx = document.getElementById('trendChart');
+  const labels = byDay.map(d => d.date);
+  const allow = byDay.map(d => d.allow || 0);
+  const flag = byDay.map(d => d.flag || 0);
+  const block = byDay.map(d => d.block || 0);
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Allow', data: allow, borderColor: '#35d68f', backgroundColor: 'rgba(53,214,143,0.1)', tension: 0.3, fill: true },
+        { label: 'Flag', data: flag, borderColor: '#f0b94d', backgroundColor: 'rgba(240,185,77,0.1)', tension: 0.3, fill: true },
+        { label: 'Block', data: block, borderColor: '#f0596b', backgroundColor: 'rgba(240,89,107,0.1)', tension: 0.3, fill: true },
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 16 } } },
+      scales: {
+        x: { grid: { color: chartGridColor } },
+        y: { grid: { color: chartGridColor }, beginAtZero: true, ticks: { precision: 0 } }
+      }
+    }
+  });
+}
+
+function renderCategoryChart(categoryAverages) {
+  const ctx = document.getElementById('categoryChart');
+  const labels = Object.keys(categoryAverages);
+  const values = Object.values(categoryAverages);
+  if (categoryChart) categoryChart.destroy();
+  categoryChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{ label: 'Avg score', data: values, backgroundColor: '#6c8bff', borderRadius: 6 }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false } },
+        y: { grid: { color: chartGridColor }, beginAtZero: true, max: 1 }
+      }
+    }
+  });
+}
+
+function renderReviewChart(reviewStats) {
+  const ctx = document.getElementById('reviewChart');
+  const labels = Object.keys(reviewStats);
+  const values = Object.values(reviewStats);
+  const colors = { pending: '#9aa3b5', approved: '#35d68f', rejected: '#f0596b' };
+  if (reviewChart) reviewChart.destroy();
+  reviewChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: labels.map(l => colors[l] || '#6c8bff'), borderWidth: 0 }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 16 } } }
+    }
+  });
+}
+
+function renderModeratorTable(stats) {
+  const body = document.getElementById('modBody');
+  const empty = document.getElementById('modEmpty');
+  body.innerHTML = '';
+  if (!stats.length) { empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  for (const s of stats) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${guardrailEsc(s.reviewed_by)}</td><td>${s.reviews}</td><td>${s.approved}</td><td>${s.rejected}</td>`;
+    body.appendChild(tr);
+  }
+}
+</script>
+</body>
+</html>

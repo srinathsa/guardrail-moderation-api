@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Guardrail Moderation — Live Demo</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+<div class="navbar">
+  <div class="brand"><div class="logo">🛡️</div> Guardrail</div>
+  <nav>
+    <a href="/demo" class="active">API Demo</a>
+    <a href="/">Live Feed</a>
+    <a href="/login">Staff Login →</a>
+  </nav>
+  <div></div>
+</div>
+
+<main class="page">
+  <div class="page-header">
+    <h1>Live moderation demo</h1>
+    <p>Test text and image moderation directly against your running API using a service <span class="mono">x-api-key</span>.</p>
+  </div>
+
+  <div class="panel" style="margin-bottom: 20px;">
+    <h2>API connection</h2>
+    <div class="grid-2">
+      <div>
+        <label>API base URL</label>
+        <input type="text" id="baseUrl" />
+      </div>
+      <div>
+        <label>x-api-key</label>
+        <input type="text" id="apiKey" value="changeme-dev-key" />
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="panel">
+      <h2>Text moderation</h2>
+      <label>Text to check</label>
+      <textarea id="textInput" placeholder="Type something to moderate...">You are a wonderful person, have a great day!</textarea>
+      <button class="btn-primary" style="margin-top:14px" onclick="moderateText()">Moderate text</button>
+      <div id="textResult" style="margin-top:18px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Image moderation</h2>
+      <label>Upload JPEG / PNG / WEBP (max 10MB)</label>
+      <input type="file" id="imageInput" accept="image/jpeg,image/png,image/webp" />
+      <button class="btn-primary" style="margin-top:14px" onclick="moderateImage()">Moderate image</button>
+      <div id="imageResult" style="margin-top:18px"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+document.getElementById('baseUrl').value = window.location.origin;
+
+function badge(decision) {
+  return `<span class="badge ${decision}">${decision}</span>`;
+}
+
+function renderScores(scores) {
+  let html = '<div class="score-row">';
+  for (const [cat, val] of Object.entries(scores)) {
+    const pct = Math.min(100, Math.round(val * 100));
+    html += `<div>${cat}</div><div>${val.toFixed(3)}</div>`;
+    html += `<div class="score-bar-wrap"><div class="score-bar" style="width:${pct}%"></div></div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderResult(el, data) {
+  el.innerHTML = `
+    ${badge(data.decision)}
+    <div class="muted" style="margin-top:10px; font-size:12px; line-height:1.7;">
+      id ${data.id} &middot; lang ${data.detected_language ?? 'n/a'} &middot; model
+      <span class="mono">${data.model_used}</span> &middot; ${data.processing_time_ms.toFixed(1)}ms<br/>
+      ${guardrailReasonsHtml(data.reasons)}
+    </div>
+    ${renderScores(data.scores)}
+  `;
+}
+
+function guardrailReasonsHtml(reasons) {
+  return reasons.map(r => `<div>&bull; ${r}</div>`).join('');
+}
+
+async function moderateText() {
+  const base = document.getElementById('baseUrl').value;
+  const key = document.getElementById('apiKey').value;
+  const text = document.getElementById('textInput').value;
+  const el = document.getElementById('textResult');
+  el.innerHTML = '<span class="faint">Checking…</span>';
+  try {
+    const res = await fetch(`${base}/moderate/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key },
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    if (!res.ok) { el.innerHTML = `<span style="color:var(--block)">${data.detail || res.status}</span>`; return; }
+    renderResult(el, data);
+  } catch (e) { el.innerHTML = `<span style="color:var(--block)">${e}</span>`; }
+}
+
+async function moderateImage() {
+  const base = document.getElementById('baseUrl').value;
+  const key = document.getElementById('apiKey').value;
+  const file = document.getElementById('imageInput').files[0];
+  const el = document.getElementById('imageResult');
+  if (!file) { el.innerHTML = '<span class="faint">Please choose an image first.</span>'; return; }
+  el.innerHTML = '<span class="faint">Checking…</span>';
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const res = await fetch(`${base}/moderate/image`, {
+      method: 'POST',
+      headers: { 'x-api-key': key },
+      body: form
+    });
+    const data = await res.json();
+    if (!res.ok) { el.innerHTML = `<span style="color:var(--block)">${data.detail || res.status}</span>`; return; }
+    renderResult(el, data);
+  } catch (e) { el.innerHTML = `<span style="color:var(--block)">${e}</span>`; }
+}
+</script>
+</body>
+</html>

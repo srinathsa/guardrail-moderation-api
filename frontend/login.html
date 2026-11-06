@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sign in — Guardrail</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+<div class="center-screen">
+  <div class="auth-card">
+    <div class="logo-row">
+      <div class="logo">🛡️</div>
+      <div>
+        <h1>Guardrail Dashboard</h1>
+      </div>
+    </div>
+    <p class="sub">Sign in to review, analyze, and manage moderation decisions.</p>
+
+    <div class="auth-error" id="errorBox"></div>
+
+    <div class="field">
+      <label>API base URL</label>
+      <input type="text" id="baseUrl" />
+    </div>
+    <div class="field">
+      <label>Username</label>
+      <input type="text" id="username" placeholder="admin" autocomplete="username" />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
+    </div>
+    <button class="btn-primary" onclick="login()">Sign in</button>
+
+    <p class="auth-hint">New here? <a href="/signup">Create an account →</a></p>
+
+    <p class="auth-hint">
+      First run? Default bootstrap admin is <span class="mono">admin</span> /
+      <span class="mono">admin123</span> (set via <span class="mono">ADMIN_USERNAME</span> /
+      <span class="mono">ADMIN_PASSWORD</span> env vars).
+    </p>
+    <p class="auth-hint"><a href="/demo">← back to public demo</a></p>
+  </div>
+</div>
+
+<script>
+document.getElementById('baseUrl').value = window.location.origin;
+
+// If already logged in, skip straight to the right landing page.
+if (localStorage.getItem('guardrail_token')) {
+  const role = localStorage.getItem('guardrail_role');
+  window.location.href = (role === 'client') ? '/' : '/review';
+}
+
+document.getElementById('password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') login();
+});
+
+async function login() {
+  const base = document.getElementById('baseUrl').value;
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errorBox = document.getElementById('errorBox');
+  errorBox.style.display = 'none';
+
+  if (!username || !password) {
+    errorBox.textContent = 'Please enter both a username and password.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  try {
+    const res = await fetch(`${base}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorBox.textContent = data.detail || 'Login failed.';
+      errorBox.style.display = 'block';
+      return;
+    }
+    localStorage.setItem('guardrail_token', data.access_token);
+    localStorage.setItem('guardrail_username', data.username);
+    localStorage.setItem('guardrail_role', data.role);
+    localStorage.setItem('guardrail_base_url', base);
+
+    if (data.role === 'client') {
+      window.location.href = '/';
+    } else {
+      window.location.href = '/review';
+    }
+  } catch (e) {
+    errorBox.textContent = 'Could not reach the API at that base URL.';
+    errorBox.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>

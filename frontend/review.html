@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Review Dashboard — Guardrail</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+<div id="navHolder"></div>
+
+<main class="page">
+  <div class="page-header">
+    <h1>Human review queue</h1>
+    <p>Approve (overturn) or reject (confirm) flagged/blocked moderation decisions.</p>
+  </div>
+
+  <div class="panel" style="margin-bottom:22px">
+    <div class="controls">
+      <div>
+        <label>Decision</label>
+        <select id="decisionFilter">
+          <option value="">any</option>
+          <option value="flag">flag</option>
+          <option value="block">block</option>
+          <option value="allow">allow</option>
+        </select>
+      </div>
+      <div>
+        <label>Review status</label>
+        <select id="statusFilter">
+          <option value="pending">pending</option>
+          <option value="">any</option>
+          <option value="approved">approved</option>
+          <option value="rejected">rejected</option>
+        </select>
+      </div>
+      <div style="flex:0 0 auto; align-self:end;">
+        <button class="btn-primary" onclick="loadLogs()">Refresh</button>
+      </div>
+    </div>
+
+    <table id="logsTable">
+      <thead>
+        <tr>
+          <th>ID</th><th>Time</th><th>Type</th><th>Lang</th><th>Preview</th>
+          <th>Decision</th><th>Reasons</th><th>Model</th><th>Review</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="logsBody"></tbody>
+    </table>
+    <div id="emptyMsg" class="empty-state" style="display:none"></div>
+  </div>
+</main>
+
+<script src="/assets/common.js"></script>
+<script>
+const session = guardrailRequireAuth();
+if (session) {
+  document.getElementById('navHolder').innerHTML = guardrailRenderNavbar('/review', session);
+  loadLogs();
+}
+
+async function loadLogs() {
+  const decision = document.getElementById('decisionFilter').value;
+  const status = document.getElementById('statusFilter').value;
+  const params = new URLSearchParams();
+  if (decision) params.set('decision', decision);
+  if (status) params.set('review_status', status);
+  params.set('limit', '100');
+
+  const body = document.getElementById('logsBody');
+  const emptyMsg = document.getElementById('emptyMsg');
+  body.innerHTML = '';
+
+  const res = await guardrailApiFetch(session, `/audit/logs?${params.toString()}`);
+  if (!res.ok) {
+    emptyMsg.style.display = 'block';
+    emptyMsg.textContent = `Error loading logs: ${res.status}`;
+    return;
+  }
+  const data = await res.json();
+  if (!data.items.length) {
+    emptyMsg.style.display = 'block';
+    emptyMsg.textContent = 'No matching audit log entries.';
+    return;
+  }
+  emptyMsg.style.display = 'none';
+
+  for (const item of data.items) {
+    const tr = document.createElement('tr');
+    const scoresStr = Object.entries(item.scores).map(([k, v]) => `${k}:${v.toFixed(2)}`).join(' ');
+    tr.innerHTML = `
+      <td>${item.id}</td>
+      <td>${new Date(item.timestamp).toLocaleString()}</td>
+      <td>${item.content_type}</td>
+      <td>${item.detected_language ?? '—'}</td>
+      <td class="preview">${guardrailEsc(item.input_preview)}<br/><span class="faint">${guardrailEsc(scoresStr)}</span></td>
+      <td><span class="badge ${item.decision}">${item.decision}</span></td>
+      <td class="preview">${guardrailEsc(item.reasons.join('; '))}</td>
+      <td class="mono" style="font-size:11px">${guardrailEsc(item.model_used)}</td>
+      <td>
+        <span class="badge ${item.review_status}">${item.review_status}</span>
+        ${item.reviewed_by ? `<br/><span class="faint">by ${guardrailEsc(item.reviewed_by)}</span>` : ''}
+      </td>
+      <td>
+        <div class="row-actions">
+          <button class="btn-approve btn-sm" onclick="review(${item.id}, 'approved')">Approve</button>
+          <button class="btn-reject btn-sm" onclick="review(${item.id}, 'rejected')">Reject</button>
+        </div>
+      </td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
+async function review(id, status) {
+  const notes = prompt(`Optional note for ${status} on log #${id}:`, '') || '';
+  const res = await guardrailApiFetch(session, `/audit/logs/${id}/review`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ review_status: status, reviewed_by: session.username, review_notes: notes })
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    alert(`Failed: ${err.detail || res.status}`);
+    return;
+  }
+  guardrailShowToast(`Log #${id} marked ${status}`);
+  loadLogs();
+}
+</script>
+</body>
+</html>

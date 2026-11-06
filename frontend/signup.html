@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sign up — Guardrail Social</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+<div class="center-screen">
+  <div class="auth-card">
+    <div class="logo-row">
+      <div class="logo">🛡️</div>
+      <div><h1>Create your account</h1></div>
+    </div>
+    <p class="sub">Join the feed — post, comment, and see your content live (once it clears moderation).</p>
+
+    <div class="auth-error" id="errorBox"></div>
+
+    <div class="field">
+      <label>API base URL</label>
+      <input type="text" id="baseUrl" />
+    </div>
+    <div class="field">
+      <label>Username</label>
+      <input type="text" id="username" placeholder="pick a username" autocomplete="username" />
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="at least 6 characters" autocomplete="new-password" />
+    </div>
+    <div class="field">
+      <label>Confirm password</label>
+      <input type="password" id="confirmPassword" placeholder="repeat your password" autocomplete="new-password" />
+    </div>
+    <button class="btn-primary" onclick="signup()">Create account</button>
+
+    <p class="auth-hint">Already have an account? <a href="/login">Sign in →</a></p>
+  </div>
+</div>
+
+<script>
+document.getElementById('baseUrl').value = window.location.origin;
+
+if (localStorage.getItem('guardrail_token')) {
+  window.location.href = '/';
+}
+
+document.getElementById('confirmPassword').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') signup();
+});
+
+async function signup() {
+  const base = document.getElementById('baseUrl').value;
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const confirmPassword = document.getElementById('confirmPassword').value;
+  const errorBox = document.getElementById('errorBox');
+  errorBox.style.display = 'none';
+
+  if (username.length < 3) {
+    errorBox.textContent = 'Username must be at least 3 characters.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (password.length < 6) {
+    errorBox.textContent = 'Password must be at least 6 characters.';
+    errorBox.style.display = 'block';
+    return;
+  }
+  if (password !== confirmPassword) {
+    errorBox.textContent = 'Passwords do not match.';
+    errorBox.style.display = 'block';
+    return;
+  }
+
+  try {
+    const res = await fetch(`${base}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorBox.textContent = data.detail || 'Sign up failed.';
+      errorBox.style.display = 'block';
+      return;
+    }
+    // Registration logs the new user in immediately.
+    localStorage.setItem('guardrail_token', data.access_token);
+    localStorage.setItem('guardrail_username', data.username);
+    localStorage.setItem('guardrail_role', data.role);
+    localStorage.setItem('guardrail_base_url', base);
+    window.location.href = '/';
+  } catch (e) {
+    errorBox.textContent = 'Could not reach the API at that base URL.';
+    errorBox.style.display = 'block';
+  }
+}
+</script>
+</body>
+</html>
